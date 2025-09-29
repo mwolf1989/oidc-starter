@@ -38,10 +38,122 @@ cp .env.example .env.local
 
 4. Configure your environment variables (see Configuration section below)
 
-5. Start the development server:
+5. Set up your OIDC provider (see Keycloak Setup section below)
+
+6. Start the development server:
 ```bash
 pnpm dev
 ```
+
+## 🔐 Keycloak Setup
+
+This section shows how to configure Keycloak as your OIDC provider. You can adapt these steps for other OIDC providers like Auth0, Google, or Azure AD.
+
+### 1. Create a Keycloak Realm
+
+1. **Access Keycloak Admin Console**: Navigate to your Keycloak instance (e.g., `https://your-keycloak.com/admin`)
+2. **Create Realm**:
+   - Click "Add realm" or the dropdown next to "Master"
+   - Enter realm name (e.g., `my-app`)
+   - Click "Create"
+
+### 2. Create an OIDC Client
+
+1. **Navigate to Clients**: In your realm, go to "Clients" in the left sidebar
+2. **Create Client**:
+   - Click "Create"
+   - **Client ID**: `oidc-starter-app` (or your preferred ID)
+   - **Client Protocol**: `openid-connect`
+   - Click "Save"
+
+### 3. Configure Client Settings
+
+In the client settings, configure the following:
+
+#### **Settings Tab**:
+- **Access Type**: `confidential` (for server-side apps with client secret)
+- **Standard Flow Enabled**: `ON` (Authorization Code Flow)
+- **Direct Access Grants Enabled**: `OFF` (recommended for security)
+- **Valid Redirect URIs**:
+  - `http://localhost:3000/api/auth/callback` (development)
+  - `https://your-domain.com/api/auth/callback` (production)
+- **Web Origins**:
+  - `http://localhost:3000` (development)
+  - `https://your-domain.com` (production)
+
+#### **Advanced Settings**:
+- **Proof Key for Code Exchange Code Challenge Method**: `S256` (PKCE support)
+
+### 4. Get Client Credentials
+
+1. **Go to Credentials Tab**: In your client configuration
+2. **Copy Client Secret**: You'll need this for your environment variables
+
+### 5. Configure User Attributes (Optional)
+
+To get additional user information:
+
+1. **Go to Client Scopes**: In the left sidebar
+2. **Select your client's dedicated scope** (e.g., `oidc-starter-app-dedicated`)
+3. **Add Mappers**: Click "Add mapper" → "By configuration" → "User Attribute"
+   - **Name**: `given_name`
+   - **User Attribute**: `firstName`
+   - **Token Claim Name**: `given_name`
+   - **Claim JSON Type**: `String`
+   - **Add to ID token**: `ON`
+   - **Add to access token**: `ON`
+   - **Add to userinfo**: `ON`
+
+Repeat for other attributes like `family_name` (lastName), `preferred_username`, etc.
+
+### 6. Create Test Users
+
+1. **Go to Users**: In the left sidebar
+2. **Add User**:
+   - **Username**: `testuser`
+   - **Email**: `test@example.com`
+   - **First Name**: `Test`
+   - **Last Name**: `User`
+   - **Email Verified**: `ON`
+   - Click "Save"
+3. **Set Password**:
+   - Go to "Credentials" tab
+   - Set password and turn off "Temporary"
+
+### 7. Environment Configuration
+
+Update your `.env.local` with the Keycloak settings:
+
+```env
+# Keycloak Configuration
+OIDC_ISSUER=https://your-keycloak.com/realms/my-app
+OIDC_CLIENT_ID=oidc-starter-app
+OIDC_CLIENT_SECRET=your-client-secret-from-credentials-tab
+OIDC_REDIRECT_URI=http://localhost:3000/api/auth/callback
+OIDC_COOKIE_PASSWORD=your-32-character-cookie-password-here
+
+# Optional: Additional scopes
+OIDC_SCOPE=openid profile email
+```
+
+### 8. Test the Integration
+
+1. Start your application: `pnpm dev`
+2. Navigate to `http://localhost:3000`
+3. Click "Sign In with Keycloak"
+4. You should be redirected to Keycloak login
+5. Sign in with your test user
+6. You should be redirected back with authentication
+
+### Common Keycloak Issues
+
+**Invalid Redirect URI**: Ensure your redirect URI exactly matches what's configured in Keycloak, including protocol (http/https) and port.
+
+**CORS Issues**: Make sure "Web Origins" is configured correctly in your Keycloak client.
+
+**Client Secret**: For confidential clients, ensure you're using the correct client secret from the Credentials tab.
+
+**Realm URL**: The issuer URL should include the realm: `https://keycloak.com/realms/your-realm`
 
 ## ⚙️ Configuration
 
