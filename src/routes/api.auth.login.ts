@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { beginAuth } from '../authkit/ssr/oidc-client';
 import { sealData } from 'iron-session';
 import { getConfig } from '../authkit/ssr/config';
+import { setCookie } from '@tanstack/react-start/server';
 
 export const Route = createFileRoute('/api/auth/login')({
   server: {
@@ -22,12 +23,28 @@ export const Route = createFileRoute('/api/auth/login')({
         };
         const encryptedState = await sealData(stateData, { password: cookiePassword });
 
-        // Redirect to authorization URL with state cookie
+        // Persist the encrypted state on the response using Start's cookie helpers
+        const secure = getConfig('redirectUri').startsWith('https:');
+        const cookieOptions: Parameters<typeof setCookie>[2] = {
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 600, // 10 minutes
+          secure,
+        };
+
+        const domain = getConfig('cookieDomain');
+        if (domain) {
+          cookieOptions.domain = domain;
+        }
+
+        setCookie('oidc-state', encryptedState, cookieOptions);
+
+        // Redirect to authorization URL
         return new Response(null, {
           status: 302,
           headers: {
             'Location': authData.url,
-            'Set-Cookie': `oidc-state=${encryptedState}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`, // 10 minutes
           },
         });
       },
