@@ -1,9 +1,41 @@
-import type { Impersonator, User } from '@workos-inc/node';
+/**
+ * Generic OIDC User interface
+ */
+export interface OIDCUser {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  preferredUsername?: string;
+  profilePictureUrl?: string;
+  emailVerified?: boolean;
+  [key: string]: any; // Allow additional claims from OIDC provider
+}
+
+/**
+ * OIDC Token Claims interface
+ */
+export interface OIDCTokenClaims {
+  sub: string;
+  iss: string;
+  aud: string | string[];
+  exp: number;
+  iat: number;
+  auth_time?: number;
+  nonce?: string;
+  acr?: string;
+  amr?: string[];
+  azp?: string;
+  [key: string]: any; // Allow additional claims
+}
 
 export interface GetAuthURLOptions {
   redirectUri?: string;
   screenHint?: 'sign-up' | 'sign-in';
   returnPathname?: string;
+  scope?: string;
+  prompt?: string;
 }
 
 export interface CookieOptions {
@@ -16,30 +48,26 @@ export interface CookieOptions {
 }
 
 export interface UserInfo {
-  user: User;
+  user: OIDCUser;
   sessionId: string;
-  organizationId?: string;
-  role?: string;
-  permissions?: Array<string>;
-  entitlements?: Array<string>;
-  impersonator?: Impersonator;
   accessToken: string;
+  idToken?: string;
+  [key: string]: any; // Allow additional user info from OIDC provider
 }
+
 export interface NoUserInfo {
   user: null;
   sessionId?: undefined;
-  organizationId?: undefined;
-  role?: undefined;
-  permissions?: undefined;
-  entitlements?: undefined;
-  impersonator?: undefined;
   accessToken?: undefined;
+  idToken?: undefined;
 }
 
 export interface AuthkitOptions {
   debug?: boolean;
   redirectUri?: string;
   screenHint?: 'sign-up' | 'sign-in';
+  scope?: string;
+  prompt?: string;
 }
 
 export interface AuthkitResponse {
@@ -49,7 +77,7 @@ export interface AuthkitResponse {
 }
 
 /**
- * AuthKit Session
+ * OIDC Session
  */
 export interface Session {
   /**
@@ -59,74 +87,66 @@ export interface Session {
   /**
    * The session refresh token - used to refresh the access token
    */
-  refreshToken: string;
+  refreshToken?: string;
+  /**
+   * The OIDC ID token
+   */
+  idToken?: string;
   /**
    * The logged-in user
    */
-  user: User;
+  user: OIDCUser;
   /**
-   * The impersonator user, if any
+   * Token expiration timestamp
    */
-  impersonator?: Impersonator;
+  expiresAt?: number;
 }
 
 /**
- * AuthKit Configuration Options
+ * OIDC Configuration Options
  */
-export interface AuthKitConfig {
+export interface OIDCConfig {
   /**
-   * The WorkOS Client ID
-   * Equivalent to the WORKOS_CLIENT_ID environment variable
+   * The OIDC Client ID
+   * Equivalent to the OIDC_CLIENT_ID environment variable
    */
   clientId: string;
 
   /**
-   * The WorkOS API Key
-   * Equivalent to the WORKOS_API_KEY environment variable
+   * The OIDC Client Secret
+   * Equivalent to the OIDC_CLIENT_SECRET environment variable
    */
-  apiKey: string;
+  clientSecret: string;
+
+  /**
+   * The OIDC Issuer URL (e.g., https://your-keycloak.com/realms/your-realm)
+   * Equivalent to the OIDC_ISSUER environment variable
+   */
+  issuer: string;
 
   /**
    * The redirect URI for the authentication callback
-   * Equivalent to the WORKOS_REDIRECT_URI environment variable
+   * Equivalent to the OIDC_REDIRECT_URI environment variable
    */
   redirectUri: string;
 
   /**
    * The password used to encrypt the session cookie
-   * Equivalent to the WORKOS_COOKIE_PASSWORD environment variable
+   * Equivalent to the OIDC_COOKIE_PASSWORD environment variable
    * Must be at least 32 characters long
    */
   cookiePassword: string;
 
   /**
-   * The hostname of the API to use
-   * Equivalent to the WORKOS_API_HOSTNAME environment variable
-   */
-  apiHostname?: string;
-
-  /**
-   * Whether to use HTTPS for API requests
-   * Equivalent to the WORKOS_API_HTTPS environment variable
-   */
-  apiHttps: boolean;
-
-  /**
-   * The port to use for the API
-   * Equivalent to the WORKOS_API_PORT environment variable
-   */
-  apiPort?: number;
-
-  /**
    * The maximum age of the session cookie in seconds
-   * Equivalent to the WORKOS_COOKIE_MAX_AGE environment variable
+   * Equivalent to the OIDC_COOKIE_MAX_AGE environment variable
    */
   cookieMaxAge: number;
 
   /**
    * The name of the session cookie
-   * Equivalent to the WORKOS_COOKIE_NAME environment variable
-   * Defaults to "wos-session"
+   * Equivalent to the OIDC_COOKIE_NAME environment variable
+   * Defaults to "oidc-session"
    */
   cookieName: string;
 
@@ -134,4 +154,55 @@ export interface AuthKitConfig {
    * The domain for the session cookie
    */
   cookieDomain?: string;
+
+  /**
+   * The OIDC scopes to request
+   * Defaults to "openid profile email"
+   */
+  scope?: string;
+
+  /**
+   * Additional OIDC parameters
+   */
+  additionalParams?: Record<string, string>;
 }
+
+/**
+ * PKCE (Proof Key for Code Exchange) data
+ */
+export interface PKCEData {
+  codeVerifier: string;
+  codeChallenge: string;
+  codeChallengeMethod: 'S256';
+}
+
+/**
+ * OIDC Token Response
+ */
+export interface OIDCTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  id_token?: string;
+  scope?: string;
+}
+
+/**
+ * OIDC Discovery Document
+ */
+export interface OIDCDiscoveryDocument {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  userinfo_endpoint?: string;
+  jwks_uri: string;
+  end_session_endpoint?: string;
+  scopes_supported?: string[];
+  response_types_supported: string[];
+  grant_types_supported?: string[];
+  code_challenge_methods_supported?: string[];
+}
+
+// Legacy alias for backward compatibility
+export interface AuthKitConfig extends OIDCConfig {}

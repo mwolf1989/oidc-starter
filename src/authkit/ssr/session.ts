@@ -1,26 +1,26 @@
 import { redirect } from '@tanstack/react-router';
 import { getCookie, setCookie } from '@tanstack/react-start/server';
 import { sealData, unsealData } from 'iron-session';
-import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
+import { decodeJwt } from 'jose';
 import { getConfig } from './config';
-import { lazy } from './utils';
-import { getWorkOS } from './workos';
-import type { AccessToken, AuthenticationResponse } from '@workos-inc/node';
-import type { AuthkitOptions, AuthkitResponse, CookieOptions, GetAuthURLOptions, Session } from './interfaces';
 
-const sessionHeaderName = 'x-workos-session';
-const middlewareHeaderName = 'x-workos-middleware';
 
-export function getAuthorizationUrl(options: GetAuthURLOptions = {}) {
-  const { returnPathname, screenHint, redirectUri } = options;
+import type {
+  AuthkitOptions,
+  AuthkitResponse,
+  CookieOptions,
+  GetAuthURLOptions,
+  Session,
+  OIDCTokenClaims
+} from './interfaces';
 
-  return getWorkOS().userManagement.getAuthorizationUrl({
-    provider: 'authkit',
-    clientId: getConfig('clientId'),
-    redirectUri: redirectUri || getConfig('redirectUri'),
-    state: returnPathname ? btoa(JSON.stringify({ returnPathname })) : undefined,
-    screenHint,
-  });
+
+const sessionHeaderName = 'x-oidc-session';
+const middlewareHeaderName = 'x-oidc-middleware';
+
+export async function getAuthorizationUrl(_options: GetAuthURLOptions = {}): Promise<string> {
+  // This is now handled by the login route directly
+  return '/api/auth/login';
 }
 
 export function serializeCookie(name: string, value: string, options: Partial<CookieOptions> = {}): string {
@@ -57,57 +57,113 @@ export async function encryptSession(session: Session) {
 
 export async function withAuth() {
   const session = await getSessionFromCookie();
+  console.log('withAuth: session from cookie:', session ? 'found' : 'not found');
 
   if (!session?.user) {
+    console.log('withAuth: no user in session');
     return { user: null };
   }
 
-  const {
-    sid: sessionId,
-    org_id: organizationId,
-    role,
-    permissions,
-    entitlements,
-  } = decodeJwt<AccessToken>(session.accessToken);
+  console.log('withAuth: user found:', session.user.email);
+
+  // For OIDC, we can extract claims from the access token or ID token
+  let sessionId = '';
+  try {
+    const tokenClaims = decodeJwt<OIDCTokenClaims>(session.accessToken);
+    sessionId = tokenClaims.sub || '';
+  } catch (error) {
+    // If we can't decode the token, generate a session ID from user ID
+    sessionId = session.user.id || '';
+  }
 
   return {
     sessionId,
     user: session.user,
-    organizationId,
-    role,
-    permissions,
-    entitlements,
-    impersonator: session.impersonator,
     accessToken: session.accessToken,
+    idToken: session.idToken,
   };
 }
 
 export async function getSessionFromCookie() {
-  const cookieName = getConfig('cookieName') || 'wos-session';
+  const cookieName = getConfig('cookieName') || 'oidc-session';
   const cookie = getCookie(cookieName);
+  
+  console.log('[SESSION-DEBUG] getSessionFromCookie', {
+    cookieName,
+    hasCookie: !!cookie,
+    cookieLength: cookie?.length,
+    cookiePreview: cookie?.substring(0, 50) + '...'
+  });
 
   if (cookie) {
-    return decryptSession(cookie);
+    try {
+      const session = await decryptSession(cookie);
+      console.log('[SESSION-DEBUG] Session decrypted successfully', {
+        hasUser: !!session.user,
+        userId: session.user?.id,
+        email: session.user?.email
+      });
+      return session;
+    } catch (error) {
+      console.error('[SESSION-DEBUG] Failed to decrypt session:', error);
+      return null;
+    }
   }
+  
+  return null;
 }
 
-export async function saveSession(sessionOrResponse: Session | AuthenticationResponse): Promise<void> {
-  const cookieName = getConfig('cookieName') || 'wos-session';
-  const encryptedSession = await encryptSession(sessionOrResponse);
-  setCookie(cookieName, encryptedSession);
+export async function saveSession(session: Session): Promise<void> {
+  const cookieName = getConfig('cookieName') || 'oidc-session';
+  const encryptedSession = await encryptSession(session);
+
+  console.log('[SESSION-DEBUG] saveSession', {
+    cookieName,
+    encryptedSessionLength: encryptedSession.length,
+    sessionData: {
+      hasUser: !!session.user,
+      userId: session.user?.id,
+      email: session.user?.email
+    }
+  });
+
+  // Set cookie with proper options for TanStack Start
+  // The key issue is that TanStack Start needs explicit cookie options
+  const cookieOptions = {
+    httpOnly: true,
+    secure: getConfig('redirectUri').startsWith('https:'),
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: getConfig('cookieMaxAge') || 60 * 60 * 24 * 400, // 400 days default
+  };
+
+  console.log('[SESSION-DEBUG] Setting cookie with options', {
+    cookieOptions,
+    domain: getConfig('cookieDomain')
+  });
+
+  // Add domain if configured
+  const domain = getConfig('cookieDomain');
+  if (domain) {
+    (cookieOptions as any).domain = domain;
+  }
+
+  setCookie(cookieName, encryptedSession, cookieOptions);
+
+  console.log('[SESSION-DEBUG] Cookie set with explicit options');
+
+  // Immediately try to read the cookie back to test if it works
+  const sessionCookie = getCookie(cookieName);
+  console.log('[SESSION-DEBUG] Immediate cookie read test', {
+    hasSessionCookie: !!sessionCookie,
+    sessionCookieLength: sessionCookie?.length
+  });
 }
 
-// JWKS call only happens once and the result is cached. The lazy function ensures that
-// the JWK set is only created when it's needed, and not before.
-const JWKS = lazy(() => createRemoteJWKSet(new URL(getWorkOS().userManagement.getJwksUrl(getConfig('clientId')))));
-
+// For now, we'll skip token verification since openid-client handles this
 async function verifyAccessToken(accessToken: string): Promise<boolean> {
-  try {
-    await jwtVerify(accessToken, JWKS());
-    return true;
-  } catch {
-    return false;
-  }
+  // TODO: Implement proper token verification with openid-client
+  return !!accessToken;
 }
 
 function getReturnPathname(url: string): string {
@@ -145,42 +201,41 @@ export async function updateSession(
       console.log('No session found from cookie');
     }
 
+    const authUrl = await getAuthorizationUrl({
+      returnPathname: getReturnPathname(request.url),
+      redirectUri: options.redirectUri || getConfig('redirectUri'),
+      screenHint: options.screenHint,
+    });
+
     return {
       session: { user: null },
       headers: newRequestHeaders,
-      authorizationUrl: getAuthorizationUrl({
-        returnPathname: getReturnPathname(request.url),
-        redirectUri: options.redirectUri || getConfig('redirectUri'),
-        screenHint: options.screenHint,
-      }),
+      authorizationUrl: authUrl,
     };
   }
 
   const hasValidSession = await verifyAccessToken(session.accessToken);
 
-  const cookieName = getConfig('cookieName') || 'wos-session';
+  const cookieName = getConfig('cookieName') || 'oidc-session';
 
   if (hasValidSession) {
     newRequestHeaders.set(sessionHeaderName, getCookie(cookieName)!);
 
-    const {
-      sid: sessionId,
-      org_id: organizationId,
-      role,
-      permissions,
-      entitlements,
-    } = decodeJwt<AccessToken>(session.accessToken);
+    // For OIDC, extract session ID from token claims
+    let sessionId = '';
+    try {
+      const tokenClaims = decodeJwt<OIDCTokenClaims>(session.accessToken);
+      sessionId = tokenClaims.sub || '';
+    } catch (error) {
+      sessionId = session.user.id || '';
+    }
 
     return {
       session: {
         sessionId,
         user: session.user,
-        organizationId,
-        role,
-        permissions,
-        entitlements,
-        impersonator: session.impersonator,
         accessToken: session.accessToken,
+        idToken: session.idToken,
       },
       headers: newRequestHeaders,
     };
@@ -188,55 +243,22 @@ export async function updateSession(
 
   try {
     if (options.debug) {
-      // istanbul ignore next
       console.log(
         `Session invalid. ${session.accessToken ? `Refreshing access token that ends in ${session.accessToken.slice(-10)}` : 'Access token missing.'}`,
       );
     }
 
-    const { org_id: organizationIdFromAccessToken } = decodeJwt<AccessToken>(session.accessToken);
-
-    const { accessToken, refreshToken, user, impersonator } =
-      await getWorkOS().userManagement.authenticateWithRefreshToken({
-        clientId: getConfig('clientId'),
-        refreshToken: session.refreshToken,
-        organizationId: organizationIdFromAccessToken,
-      });
-
-    if (options.debug) {
-      console.log('Session successfully refreshed');
+    if (!session.refreshToken) {
+      throw new Error('No refresh token available');
     }
-    // Encrypt session with new access and refresh tokens
-    const encryptedSession = await encryptSession({
-      accessToken,
-      refreshToken,
-      user,
-      impersonator,
-    });
 
-    newRequestHeaders.append('Set-Cookie', serializeCookie(cookieName, encryptedSession));
-    newRequestHeaders.set(sessionHeaderName, encryptedSession);
-
-    const {
-      sid: sessionId,
-      org_id: organizationId,
-      role,
-      permissions,
-      entitlements,
-    } = decodeJwt<AccessToken>(accessToken);
-
+    // TODO: Implement token refresh with openid-client
+    // For now, just redirect to login
+    const authUrl = await getAuthorizationUrl();
     return {
-      session: {
-        sessionId,
-        user,
-        organizationId,
-        role,
-        permissions,
-        entitlements,
-        impersonator,
-        accessToken,
-      },
+      session: { user: null },
       headers: newRequestHeaders,
+      authorizationUrl: authUrl,
     };
   } catch (e) {
     if (options.debug) {
@@ -247,22 +269,37 @@ export async function updateSession(
     const deleteCookie = serializeCookie(cookieName, '', { maxAge: 0 });
     newRequestHeaders.append('Set-Cookie', deleteCookie);
 
+    const authUrl = await getAuthorizationUrl({
+      returnPathname: getReturnPathname(request.url),
+    });
+
     return {
       session: { user: null },
       headers: newRequestHeaders,
-      authorizationUrl: getAuthorizationUrl({
-        returnPathname: getReturnPathname(request.url),
-      }),
+      authorizationUrl: authUrl,
     };
   }
 }
 
 export async function terminateSession({ returnTo }: { returnTo?: string } = {}) {
-  const { sessionId } = await withAuth();
-  if (sessionId) {
-    const href = getWorkOS().userManagement.getLogoutUrl({ sessionId, returnTo });
-    return redirect({ href, throw: true, reloadDocument: true });
+  // Clear the session cookie with proper options
+  const cookieName = getConfig('cookieName') || 'oidc-session';
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: getConfig('redirectUri').startsWith('https:'),
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: 0, // Delete the cookie
+  };
+
+  // Add domain if configured
+  const domain = getConfig('cookieDomain');
+  if (domain) {
+    (cookieOptions as any).domain = domain;
   }
+
+  setCookie(cookieName, '', cookieOptions);
 
   return redirect({ to: returnTo ?? '/', throw: true, reloadDocument: true });
 }

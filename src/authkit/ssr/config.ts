@@ -1,5 +1,5 @@
-import { lazy } from './utils.js';
-import type { AuthKitConfig } from './interfaces.js';
+import { lazy } from './utils';
+import type { OIDCConfig } from './interfaces';
 
 type ValueSource = Record<string, any> | ((key: string) => any);
 
@@ -15,25 +15,24 @@ const defaultSource: ValueSource = (key: string): string | undefined => {
 };
 
 /**
- * Configuration class for AuthKit.
+ * Configuration class for OIDC.
  * This class is used to manage configuration values and provide defaults.
  * It also provides a way to get configuration values from environment variables.
  * @internal
  */
 export class Configuration {
-  private config: Partial<AuthKitConfig> = {
-    cookieName: 'wos-session',
-    apiHttps: true,
+  private config: Partial<OIDCConfig> = {
+    cookieName: 'oidc-session',
     // Defaults to 400 days, the maximum allowed by Chrome
     // It's fine to have a long cookie expiry date as the access/refresh tokens
     // act as the actual time-limited aspects of the session.
     cookieMaxAge: 60 * 60 * 24 * 400,
-    apiHostname: 'api.workos.com',
+    scope: 'openid profile email',
   };
 
   private valueSource: ValueSource = defaultSource;
 
-  private readonly requiredKeys: Array<keyof AuthKitConfig> = ['clientId', 'apiKey', 'redirectUri', 'cookiePassword'];
+  private readonly requiredKeys: Array<keyof OIDCConfig> = ['clientId', 'clientSecret', 'issuer', 'redirectUri', 'cookiePassword'];
 
   /**
    * Convert a camelCase string to an uppercase, underscore-separated environment variable name.
@@ -41,10 +40,10 @@ export class Configuration {
    * @returns The environment variable name
    */
   protected getEnvironmentVariableName(str: string) {
-    return `WORKOS_${str.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}`;
+    return `OIDC_${str.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}`;
   }
 
-  private updateConfig(config: Partial<AuthKitConfig>): void {
+  private updateConfig(config: Partial<OIDCConfig>): void {
     this.config = { ...this.config, ...config };
   }
 
@@ -52,7 +51,7 @@ export class Configuration {
     this.valueSource = source;
   }
 
-  configure(configOrSource: Partial<AuthKitConfig> | ValueSource, source?: ValueSource): void {
+  configure(configOrSource: Partial<OIDCConfig> | ValueSource, source?: ValueSource): void {
     if (typeof configOrSource === 'function') {
       this.setValueSource(configOrSource);
     } else if (typeof configOrSource === 'object' && !source) {
@@ -68,10 +67,10 @@ export class Configuration {
     }
   }
 
-  getValue<T extends keyof AuthKitConfig>(key: T): AuthKitConfig[T] {
+  getValue<T extends keyof OIDCConfig>(key: T): OIDCConfig[T] {
     // First check environment variables
-    const envKey = this.getEnvironmentVariableName(key);
-    let envValue: AuthKitConfig[T] | undefined = undefined;
+    const envKey = this.getEnvironmentVariableName(key as string);
+    let envValue: OIDCConfig[T] | undefined = undefined;
 
     const { valueSource, config } = this;
     if (typeof valueSource === 'function') {
@@ -83,28 +82,24 @@ export class Configuration {
     // If environment variable exists, use it
     if (envValue != null) {
       // Convert string values to appropriate types
-      if (key === 'apiHttps' && typeof envValue === 'string') {
-        return (envValue === 'true') as AuthKitConfig[T];
-      }
-
-      if ((key === 'apiPort' || key === 'cookieMaxAge') && typeof envValue === 'string') {
+      if (key === 'cookieMaxAge' && typeof envValue === 'string') {
         const num = parseInt(envValue, 10);
-        return (isNaN(num) ? undefined : num) as AuthKitConfig[T];
+        return (isNaN(num) ? undefined : num) as OIDCConfig[T];
       }
 
-      return envValue as AuthKitConfig[T];
+      return envValue as OIDCConfig[T];
     }
 
     // Then check programmatically provided config
     if (key in config && config[key] != undefined) {
-      return config[key] as AuthKitConfig[T];
+      return config[key] as OIDCConfig[T];
     }
 
     if (this.requiredKeys.includes(key)) {
-      throw new Error(`Missing required configuration value for ${key} (${envKey}).`);
+      throw new Error(`Missing required configuration value for ${String(key)} (${envKey}).`);
     }
 
-    return undefined as AuthKitConfig[T];
+    return undefined as OIDCConfig[T];
   }
 }
 
@@ -112,7 +107,7 @@ export class Configuration {
 const getConfigurationInstance = lazy(() => new Configuration());
 
 /**
- * Configure AuthKit with a custom value source.
+ * Configure OIDC with a custom value source.
  * @param source The source of configuration values
  *
  * @example
@@ -120,20 +115,21 @@ const getConfigurationInstance = lazy(() => new Configuration());
  */
 export function configure(source: ValueSource): void;
 /**
- * Configure AuthKit with custom values.
+ * Configure OIDC with custom values.
  * @param config The configuration values
  *
  * @example
  * configure({
  *    clientId: 'your-client-id',
+ *    clientSecret: 'your-client-secret',
+ *    issuer: 'https://your-keycloak.com/realms/your-realm',
  *    redirectUri: 'https://your-app.com/auth/callback',
- *    apiKey: 'your-api-key',
  *    cookiePassword: 'your-cookie-password',
  *  });
  */
-export function configure(config: Partial<AuthKitConfig>): void;
+export function configure(config: Partial<OIDCConfig>): void;
 /**
- * Configure AuthKit with custom values and a custom value source.
+ * Configure OIDC with custom values and a custom value source.
  * @param config The configuration values
  * @param source The source of configuration values
  *
@@ -142,8 +138,8 @@ export function configure(config: Partial<AuthKitConfig>): void;
  *   clientId: 'your-client-id',
  * }, env);
  */
-export function configure(config: Partial<AuthKitConfig>, source: ValueSource): void;
-export function configure(configOrSource: Partial<AuthKitConfig> | ValueSource, source?: ValueSource): void {
+export function configure(config: Partial<OIDCConfig>, source: ValueSource): void;
+export function configure(configOrSource: Partial<OIDCConfig> | ValueSource, source?: ValueSource): void {
   const config = getConfigurationInstance();
   config.configure(configOrSource, source);
 }
@@ -156,7 +152,7 @@ export function configure(configOrSource: Partial<AuthKitConfig> | ValueSource, 
  * @param key The configuration key
  * @returns The configuration value
  */
-export function getConfig<T extends keyof AuthKitConfig>(key: T): AuthKitConfig[T] {
+export function getConfig<T extends keyof OIDCConfig>(key: T): OIDCConfig[T] {
   const config = getConfigurationInstance();
   return config.getValue(key);
 }
