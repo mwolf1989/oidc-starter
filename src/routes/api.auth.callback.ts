@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getCookie, setCookie } from '@tanstack/react-start/server';
-import { sealData, unsealData } from 'iron-session';
+import { unsealData } from 'iron-session';
 import { handleCallback } from '../authkit/ssr/oidc-client';
 import { getConfig } from '../authkit/ssr/config';
 import { saveSession } from '../authkit/ssr/session';

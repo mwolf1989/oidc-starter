@@ -1,7 +1,6 @@
 import { redirect } from '@tanstack/react-router';
 import { getCookie, setCookie } from '@tanstack/react-start/server';
 import { sealData, unsealData } from 'iron-session';
-import { decodeJwt } from 'jose';
 import { getConfig } from './config';
 
 
@@ -11,7 +10,6 @@ import type {
   CookieOptions,
   GetAuthURLOptions,
   Session,
-  OIDCTokenClaims
 } from './interfaces';
 
 
