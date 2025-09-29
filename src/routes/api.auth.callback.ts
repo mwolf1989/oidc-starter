@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { getCookie } from '@tanstack/react-start/server';
+import { getCookie, setCookie } from '@tanstack/react-start/server';
 import { sealData, unsealData } from 'iron-session';
 import { handleCallback } from '../authkit/ssr/oidc-client';
 import { getConfig } from '../authkit/ssr/config';
@@ -10,6 +10,8 @@ export const Route = createFileRoute('/api/auth/callback')({
   server: {
     handlers: {
       GET: async ({ request }) => {
+        const clearStateCookie = () => applyStateCookie('', 0);
+
         try {
           const currentUrl = new URL(request.url);
           
@@ -61,11 +63,11 @@ export const Route = createFileRoute('/api/auth/callback')({
           const errorDescription = currentUrl.searchParams.get('error_description');
           if (error) {
             console.error('OAuth error:', error, errorDescription);
+            clearStateCookie();
             return new Response(null, {
               status: 302,
               headers: {
                 'Location': `/?error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(errorDescription || '')}`,
-                'Set-Cookie': 'oidc-state=; Path=/; HttpOnly; Max-Age=0', // Clear state cookie
               },
             });
           }
@@ -112,13 +114,16 @@ export const Route = createFileRoute('/api/auth/callback')({
           // Redirect to return URL - simple redirect like WorkOS
           const redirectTo = stateData.returnTo || '/';
 
-          return new Response(null, {
+          const response = new Response(null, {
             status: 302,
             headers: {
               'Location': redirectTo,
-              'Set-Cookie': 'oidc-state=; Path=/; HttpOnly; Max-Age=0', // Clear state cookie
             },
           });
+
+          clearStateCookie();
+
+          return response;
 
         } catch (error) {
           console.error('Callback processing error:', error);
@@ -133,11 +138,12 @@ export const Route = createFileRoute('/api/auth/callback')({
             error: error instanceof Error ? error.message : String(error),
           });
 
+          clearStateCookie();
+
           return new Response(null, {
             status: 302,
             headers: {
               'Location': `/?error=callback_error&error_description=${encodeURIComponent(error instanceof Error ? error.message : String(error))}`,
-              'Set-Cookie': 'oidc-state=; Path=/; HttpOnly; Max-Age=0', // Clear state cookie
             },
           });
         }
@@ -145,3 +151,21 @@ export const Route = createFileRoute('/api/auth/callback')({
     },
   },
 });
+
+function applyStateCookie(value: string, maxAge: number) {
+  const secure = getConfig('redirectUri').startsWith('https:');
+  const cookieOptions: Parameters<typeof setCookie>[2] = {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge,
+    secure,
+  };
+
+  const domain = getConfig('cookieDomain');
+  if (domain) {
+    cookieOptions.domain = domain;
+  }
+
+  setCookie('oidc-state', value, cookieOptions);
+}
