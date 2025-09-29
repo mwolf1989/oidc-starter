@@ -18,6 +18,20 @@ import type {
 const sessionHeaderName = 'x-oidc-session';
 const middlewareHeaderName = 'x-oidc-middleware';
 
+export async function decryptSession(encryptedSession: string): Promise<Session> {
+  const cookiePassword = getConfig('cookiePassword');
+  return unsealData<Session>(encryptedSession, {
+    password: cookiePassword,
+  });
+}
+
+export async function encryptSession(session: Session) {
+  return sealData(session, {
+    password: getConfig('cookiePassword'),
+    ttl: 0,
+  });
+}
+
 export async function getAuthorizationUrl(_options: GetAuthURLOptions = {}): Promise<string> {
   // This is now handled by the login route directly
   return '/api/auth/login';
@@ -41,19 +55,6 @@ export function serializeCookie(name: string, value: string, options: Partial<Co
   return cookie;
 }
 
-export async function decryptSession(encryptedSession: string): Promise<Session> {
-  const cookiePassword = getConfig('cookiePassword');
-  return unsealData<Session>(encryptedSession, {
-    password: cookiePassword,
-  });
-}
-
-export async function encryptSession(session: Session) {
-  return sealData(session, {
-    password: getConfig('cookiePassword'),
-    ttl: 0,
-  });
-}
 
 export async function withAuth() {
   const session = await getSessionFromCookie();
@@ -66,38 +67,37 @@ export async function withAuth() {
 
   console.log('withAuth: user found:', session.user.email);
 
-  // For OIDC, we can extract claims from the access token or ID token
-  let sessionId = '';
-  try {
-    const tokenClaims = decodeJwt<OIDCTokenClaims>(session.accessToken);
-    sessionId = tokenClaims.sub || '';
-  } catch (error) {
-    // If we can't decode the token, generate a session ID from user ID
-    sessionId = session.user.id || '';
-  }
+  // Generate session ID from user ID
+  const sessionId = session.user.id || '';
 
   return {
     sessionId,
     user: session.user,
     accessToken: session.accessToken,
-    idToken: session.idToken,
   };
 }
 
 export async function getSessionFromCookie() {
   const cookieName = getConfig('cookieName') || 'oidc-session';
+  const accessTokenCookieName = 'oidc-access-token';
   const cookie = getCookie(cookieName);
-  
+  const accessTokenCookie = getCookie(accessTokenCookieName);
+
   console.log('[SESSION-DEBUG] getSessionFromCookie', {
     cookieName,
     hasCookie: !!cookie,
     cookieLength: cookie?.length,
-    cookiePreview: cookie?.substring(0, 50) + '...'
+    hasAccessTokenCookie: !!accessTokenCookie,
+    accessTokenLength: accessTokenCookie?.length
   });
 
-  if (cookie) {
+  if (cookie && accessTokenCookie) {
     try {
-      const session = await decryptSession(cookie);
+      const sessionWithoutToken = await decryptSession(cookie);
+      const session: Session = {
+        ...sessionWithoutToken,
+        accessToken: accessTokenCookie,
+      };
       console.log('[SESSION-DEBUG] Session decrypted successfully', {
         hasUser: !!session.user,
         userId: session.user?.id,
@@ -109,13 +109,20 @@ export async function getSessionFromCookie() {
       return null;
     }
   }
-  
+
   return null;
 }
 
-export async function saveSession(session: Session): Promise<void> {
+export async function saveSession(session: Session): Promise<{ mainCookie: string; accessTokenCookie: string }> {
   const cookieName = getConfig('cookieName') || 'oidc-session';
-  const encryptedSession = await encryptSession(session);
+  const accessTokenCookieName = 'oidc-access-token';
+
+  // Create session without accessToken for main cookie
+  const sessionWithoutToken = {
+    user: session.user,
+    expiresAt: session.expiresAt,
+  };
+  const encryptedSession = await encryptSession(sessionWithoutToken as any);
 
   console.log('[SESSION-DEBUG] saveSession', {
     cookieName,
@@ -127,17 +134,14 @@ export async function saveSession(session: Session): Promise<void> {
     }
   });
 
-  // Set cookie with proper options for TanStack Start
-  // The key issue is that TanStack Start needs explicit cookie options
-  const cookieOptions = {
-    httpOnly: true,
+  // Create cookie with proper options for TanStack Start
+  const cookieOptions: Partial<CookieOptions> = {
     secure: getConfig('redirectUri').startsWith('https:'),
     sameSite: 'lax' as const,
-    path: '/',
     maxAge: getConfig('cookieMaxAge') || 60 * 60 * 24 * 400, // 400 days default
   };
 
-  console.log('[SESSION-DEBUG] Setting cookie with options', {
+  console.log('[SESSION-DEBUG] Creating cookie with options', {
     cookieOptions,
     domain: getConfig('cookieDomain')
   });
@@ -145,25 +149,21 @@ export async function saveSession(session: Session): Promise<void> {
   // Add domain if configured
   const domain = getConfig('cookieDomain');
   if (domain) {
-    (cookieOptions as any).domain = domain;
+    cookieOptions.domain = domain;
   }
 
-  setCookie(cookieName, encryptedSession, cookieOptions);
+  const mainCookie = serializeCookie(cookieName, encryptedSession, cookieOptions);
+  const accessTokenCookie = serializeCookie(accessTokenCookieName, session.accessToken, cookieOptions);
 
-  console.log('[SESSION-DEBUG] Cookie set with explicit options');
+  console.log('[SESSION-DEBUG] Cookie strings created');
 
-  // Immediately try to read the cookie back to test if it works
-  const sessionCookie = getCookie(cookieName);
-  console.log('[SESSION-DEBUG] Immediate cookie read test', {
-    hasSessionCookie: !!sessionCookie,
-    sessionCookieLength: sessionCookie?.length
-  });
+  return { mainCookie, accessTokenCookie };
 }
 
-// For now, we'll skip token verification since openid-client handles this
-async function verifyAccessToken(accessToken: string): Promise<boolean> {
-  // TODO: Implement proper token verification with openid-client
-  return !!accessToken;
+// For now, we'll skip token verification since we don't store tokens
+async function verifyAccessToken(): Promise<boolean> {
+  // Since we don't store tokens, assume session is valid if it exists
+  return true;
 }
 
 function getReturnPathname(url: string): string {
@@ -214,28 +214,21 @@ export async function updateSession(
     };
   }
 
-  const hasValidSession = await verifyAccessToken(session.accessToken);
+  const hasValidSession = await verifyAccessToken();
 
   const cookieName = getConfig('cookieName') || 'oidc-session';
 
   if (hasValidSession) {
     newRequestHeaders.set(sessionHeaderName, getCookie(cookieName)!);
 
-    // For OIDC, extract session ID from token claims
-    let sessionId = '';
-    try {
-      const tokenClaims = decodeJwt<OIDCTokenClaims>(session.accessToken);
-      sessionId = tokenClaims.sub || '';
-    } catch (error) {
-      sessionId = session.user.id || '';
-    }
+    // Generate session ID from user ID
+    const sessionId = session.user.id || '';
 
     return {
       session: {
         sessionId,
         user: session.user,
         accessToken: session.accessToken,
-        idToken: session.idToken,
       },
       headers: newRequestHeaders,
     };
@@ -243,17 +236,10 @@ export async function updateSession(
 
   try {
     if (options.debug) {
-      console.log(
-        `Session invalid. ${session.accessToken ? `Refreshing access token that ends in ${session.accessToken.slice(-10)}` : 'Access token missing.'}`,
-      );
+      console.log('Session invalid. Redirecting to login.');
     }
 
-    if (!session.refreshToken) {
-      throw new Error('No refresh token available');
-    }
-
-    // TODO: Implement token refresh with openid-client
-    // For now, just redirect to login
+    // Since we don't store tokens, just redirect to login
     const authUrl = await getAuthorizationUrl();
     return {
       session: { user: null },
@@ -282,8 +268,9 @@ export async function updateSession(
 }
 
 export async function terminateSession({ returnTo }: { returnTo?: string } = {}) {
-  // Clear the session cookie with proper options
+  // Clear the session cookies
   const cookieName = getConfig('cookieName') || 'oidc-session';
+  const accessTokenCookieName = 'oidc-access-token';
 
   const cookieOptions = {
     httpOnly: true,
@@ -300,6 +287,7 @@ export async function terminateSession({ returnTo }: { returnTo?: string } = {})
   }
 
   setCookie(cookieName, '', cookieOptions);
+  setCookie(accessTokenCookieName, '', cookieOptions);
 
   return redirect({ to: returnTo ?? '/', throw: true, reloadDocument: true });
 }

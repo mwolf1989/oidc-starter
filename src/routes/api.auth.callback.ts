@@ -80,8 +80,6 @@ export const Route = createFileRoute('/api/auth/callback')({
           // Create session
           const session: Session = {
             accessToken: result.tokens.access_token,
-            refreshToken: result.tokens.refresh_token,
-            idToken: result.tokens.id_token,
             user: result.user,
             expiresAt: result.tokens.expires_in ? Date.now() + (result.tokens.expires_in * 1000) : undefined,
           };
@@ -90,14 +88,12 @@ export const Route = createFileRoute('/api/auth/callback')({
             sessionData: {
               hasUser: !!session.user,
               userId: session.user?.id,
-              email: session.user?.email,
-              hasAccessToken: !!session.accessToken,
-              hasRefreshToken: !!session.refreshToken
+              email: session.user?.email
             }
           });
 
           // Use saveSession like in WorkOS example
-          await saveSession(session);
+          const { mainCookie, accessTokenCookie } = await saveSession(session);
 
           console.log('[COOKIE-DEBUG] Session saved successfully (WorkOS style)');
 
@@ -114,11 +110,14 @@ export const Route = createFileRoute('/api/auth/callback')({
           // Redirect to return URL - simple redirect like WorkOS
           const redirectTo = stateData.returnTo || '/';
 
+          const headers = new Headers();
+          headers.set('Location', redirectTo);
+          headers.append('Set-Cookie', mainCookie);
+          headers.append('Set-Cookie', accessTokenCookie);
+
           const response = new Response(null, {
             status: 302,
-            headers: {
-              'Location': redirectTo,
-            },
+            headers,
           });
 
           clearStateCookie();

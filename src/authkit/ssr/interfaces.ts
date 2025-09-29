@@ -51,7 +51,6 @@ export interface UserInfo {
   user: OIDCUser;
   sessionId: string;
   accessToken: string;
-  idToken?: string;
   [key: string]: any; // Allow additional user info from OIDC provider
 }
 
@@ -84,14 +83,6 @@ export interface Session {
    * The session access token
    */
   accessToken: string;
-  /**
-   * The session refresh token - used to refresh the access token
-   */
-  refreshToken?: string;
-  /**
-   * The OIDC ID token
-   */
-  idToken?: string;
   /**
    * The logged-in user
    */

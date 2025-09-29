@@ -98,21 +98,12 @@ function ProfilePage() {
                     {auth.sessionId}
                   </p>
                 </div>
-                
+
                 {auth.accessToken && (
                   <div>
                     <label className="block text-sm font-medium text-gray-600">Access Token (Last 10 chars)</label>
                     <p className="text-gray-900 font-mono text-sm bg-gray-100 p-2 rounded">
                       ...{auth.accessToken.slice(-10)}
-                    </p>
-                  </div>
-                )}
-                
-                {auth.idToken && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600">ID Token (Last 10 chars)</label>
-                    <p className="text-gray-900 font-mono text-sm bg-gray-100 p-2 rounded">
-                      ...{auth.idToken.slice(-10)}
                     </p>
                   </div>
                 )}
